@@ -124,4 +124,17 @@ TEST(CgSparse, SpMatReader) {
     EXPECT_LT(iters, max_iterations) << "solver did not converge";
 }
 
+TEST(PcgSparse, SpMatReader) {
+    mat_utils::SpMatReader A{data_dir / "494_bus.mat", {"Problem"}, "A"};
+    mat_utils::SpMatReader L{data_dir / "494_bus_ichol.mat", {}, "L"};
+
+    int max_iterations = A.rows();
+    std::vector<double> b(A.rows(), 1);
+    std::vector<double> x(A.rows(), 0);
+
+    int iters = cg(A, b, x, L, tolerance, max_iterations);
+
+    EXPECT_LT(iters, max_iterations) << "solver did not converge";
+}
+
 #endif // USE_MAT_UTILS

@@ -249,4 +249,140 @@ int cg(const mat_utils::SpMatReader &A, const std::vector<double> &b,
     return iter;
 }
 
+int cg(const mat_utils::SpMatReader &A, const std::vector<double> &b,
+       std::vector<double> &x, const mat_utils::SpMatReader &L,
+       double tolerance, int max_iterations, bool real_residual) {
+
+    // SpMatReader accessors are not const-qualified, so cast away const.
+    // The accessors are read-only; this is safe.
+    auto &A_mut = const_cast<mat_utils::SpMatReader &>(A);
+    auto &L_mut = const_cast<mat_utils::SpMatReader &>(L);
+
+    int n = static_cast<int>(b.size());
+
+    if (A_mut.rows() != static_cast<size_t>(n) ||
+        A_mut.cols() != static_cast<size_t>(n)) {
+        throw std::invalid_argument("Matrix A dimension must match size of b");
+    }
+    if (L_mut.rows() != static_cast<size_t>(n) ||
+        L_mut.cols() != static_cast<size_t>(n)) {
+        throw std::invalid_argument("Matrix L dimension must match size of b");
+    }
+    if (x.size() != static_cast<size_t>(n)) {
+        throw std::invalid_argument("Vector x must have the same size as b");
+    }
+
+    // Build MKL sparse handle for A (symmetric SPD; CSC treated as CSR = A^T =
+    // A).
+    const size_t *A_jc = A_mut.jc();
+    const size_t *A_ir = A_mut.ir();
+    std::vector<MKL_INT64> A_row_ptr(A_jc, A_jc + n + 1);
+    std::vector<MKL_INT64> A_col_idx(A_ir, A_ir + A_mut.nnz());
+
+    sparse_matrix_t mkl_A;
+    mkl_sparse_d_create_csr(&mkl_A, SPARSE_INDEX_BASE_ZERO, n, n,
+                            A_row_ptr.data(), A_row_ptr.data() + 1,
+                            A_col_idx.data(), A_mut.data());
+
+    struct matrix_descr descr_A;
+    descr_A.type = SPARSE_MATRIX_TYPE_GENERAL;
+
+    // Build MKL sparse handle for L.
+    // L is lower triangular in CSC (jc = col ptrs, ir = row indices).
+    // Interpreting those same arrays as CSR gives L^T (upper triangular).
+    const size_t *L_jc = L_mut.jc();
+    const size_t *L_ir = L_mut.ir();
+    std::vector<MKL_INT64> L_row_ptr(L_jc, L_jc + n + 1);
+    std::vector<MKL_INT64> L_col_idx(L_ir, L_ir + L_mut.nnz());
+
+    sparse_matrix_t mkl_L;
+    mkl_sparse_d_create_csr(&mkl_L, SPARSE_INDEX_BASE_ZERO, n, n,
+                            L_row_ptr.data(), L_row_ptr.data() + 1,
+                            L_col_idx.data(), L_mut.data());
+
+    // mkl_L represents L^T as upper triangular in CSR.
+    struct matrix_descr descr_L;
+    descr_L.type = SPARSE_MATRIX_TYPE_TRIANGULAR;
+    descr_L.mode = SPARSE_FILL_MODE_UPPER;
+    descr_L.diag = SPARSE_DIAG_NON_UNIT;
+
+    // Relative residual threshold: ||r||^2 <= tol^2 * ||b||^2
+    double norm_b_sq = cblas_ddot(n, b.data(), 1, b.data(), 1);
+    double tol_sq = tolerance * tolerance * norm_b_sq;
+
+    // Working vectors
+    std::vector<double> r(n);   // residual
+    std::vector<double> d(n);   // search direction
+    std::vector<double> q(n);   // A * d
+    std::vector<double> s(n);   // preconditioned residual: M^{-1} r
+    std::vector<double> tmp(n); // intermediate for triangular solves
+
+    // Apply preconditioner: z = L^{-T} L^{-1} rhs  (i.e. M^{-1} rhs)
+    // mkl_L stores L^T (upper triangular), so:
+    //   Step 1: solve L * y   = rhs  → (L^T)^T * y = rhs  → TRANSPOSE on mkl_L
+    //   Step 2: solve L^T * z = y    → NON_TRANSPOSE on mkl_L
+    auto apply_precond = [&mkl_L, &descr_L,
+                          &tmp](const std::vector<double> &rhs,
+                                std::vector<double> &result) {
+        mkl_sparse_d_trsv(SPARSE_OPERATION_TRANSPOSE, 1.0, mkl_L, descr_L,
+                          rhs.data(), tmp.data());
+        mkl_sparse_d_trsv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, mkl_L, descr_L,
+                          tmp.data(), result.data());
+    };
+
+    // r = b - A * x
+    cblas_dcopy(n, b.data(), 1, r.data(), 1);
+    mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, -1.0, mkl_A, descr_A,
+                    x.data(), 1.0, r.data());
+
+    // d = M^{-1} * r
+    apply_precond(r, d);
+
+    double delta_new = cblas_ddot(n, r.data(), 1, d.data(), 1);
+    double residual_sq = cblas_ddot(n, r.data(), 1, r.data(), 1);
+
+    int iter;
+    for (iter = 0; iter < max_iterations; ++iter) {
+        if (residual_sq <= tol_sq) {
+            break;
+        }
+
+        // q = A * d
+        mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, mkl_A, descr_A,
+                        d.data(), 0.0, q.data());
+
+        double alpha = delta_new / cblas_ddot(n, d.data(), 1, q.data(), 1);
+
+        // x = x + alpha * d
+        cblas_daxpy(n, alpha, d.data(), 1, x.data(), 1);
+
+        if (real_residual) {
+            // r = b - A * x  (exact recomputation avoids accumulated error)
+            cblas_dcopy(n, b.data(), 1, r.data(), 1);
+            mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, -1.0, mkl_A,
+                            descr_A, x.data(), 1.0, r.data());
+        } else {
+            // r = r - alpha * q
+            cblas_daxpy(n, -alpha, q.data(), 1, r.data(), 1);
+        }
+
+        residual_sq = cblas_ddot(n, r.data(), 1, r.data(), 1);
+
+        // s = M^{-1} * r
+        apply_precond(r, s);
+
+        double delta_old = delta_new;
+        delta_new = cblas_ddot(n, r.data(), 1, s.data(), 1);
+        double beta = delta_new / delta_old;
+
+        // d = s + beta * d
+        cblas_dscal(n, beta, d.data(), 1);
+        cblas_daxpy(n, 1.0, s.data(), 1, d.data(), 1);
+    }
+
+    mkl_sparse_destroy(mkl_A);
+    mkl_sparse_destroy(mkl_L);
+    return iter;
+}
+
 #endif // USE_MAT_UTILS
