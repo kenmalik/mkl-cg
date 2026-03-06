@@ -15,11 +15,13 @@ else()
     set(MKL_LIB_DIR ${MKL_ROOT}/lib/intel64)
 endif()
 
+option(MKL_CG_BUILD_TESTS "Build tests" OFF)
+
 add_library(cg src/cg.cpp)
 target_include_directories(cg PUBLIC include/)
 target_compile_features(cg PRIVATE cxx_std_17)
-add_executable(cg_test src/main.cpp)
-target_link_libraries(cg_test PRIVATE cg)
+add_executable(main src/main.cpp)
+target_link_libraries(main PRIVATE cg)
 
 if(MKL_FOUND)
     target_compile_options(cg PUBLIC $<TARGET_PROPERTY:MKL::MKL,INTERFACE_COMPILE_OPTIONS>)
@@ -36,4 +38,9 @@ else()
         -lm
         -ldl
     )
+endif()
+
+if(MKL_CG_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(test)
 endif()
