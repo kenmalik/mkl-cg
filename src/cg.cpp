@@ -3,6 +3,11 @@
 #include <mkl_spblas.h>
 #include <stdexcept>
 
+#ifdef PRINT_RRN
+#include <cmath>
+#include <iostream>
+#endif // PRINT_RRN
+
 int cg(const std::vector<double> &A, const std::vector<double> &b,
        std::vector<double> &x, double tolerance, int max_iterations) {
 
@@ -343,6 +348,10 @@ int cg(const mat_utils::SpMatReader &A, const std::vector<double> &b,
 
     int iter;
     for (iter = 0; iter < max_iterations; ++iter) {
+#ifdef PRINT_RRN
+        std::cerr << std::sqrt(residual_sq / norm_b_sq) << std::endl;
+#endif // PRINT_RRN
+
         if (residual_sq <= tol_sq) {
             break;
         }
