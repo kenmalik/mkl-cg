@@ -13,7 +13,7 @@
 /// @param tolerance   convergence tolerance for residual norm
 /// @param max_iterations maximum number of iterations
 /// @return number of iterations performed
-int cg(std::vector<double>& A, std::vector<double>& b, std::vector<double>& x,
+int cg(const std::vector<double>& A, const std::vector<double>& b, std::vector<double>& x,
        double tolerance = 1e-6, int max_iterations = 100);
 
 /// Sparse CSR matrix representation.
@@ -33,7 +33,7 @@ struct CsrMatrix {
 /// @param tolerance   convergence tolerance for residual norm
 /// @param max_iterations maximum number of iterations
 /// @return number of iterations performed
-int cg(CsrMatrix& A, std::vector<double>& b, std::vector<double>& x,
+int cg(CsrMatrix& A, const std::vector<double>& b, std::vector<double>& x,
        double tolerance = 1e-6, int max_iterations = 100);
 
 #endif // CG_H

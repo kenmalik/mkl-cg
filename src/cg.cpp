@@ -3,7 +3,7 @@
 #include <mkl_spblas.h>
 #include <stdexcept>
 
-int cg(std::vector<double> &A, std::vector<double> &b, std::vector<double> &x,
+int cg(const std::vector<double> &A, const std::vector<double> &b, std::vector<double> &x,
        double tolerance, int max_iterations) {
 
     int n = static_cast<int>(b.size());
@@ -71,7 +71,7 @@ int cg(std::vector<double> &A, std::vector<double> &b, std::vector<double> &x,
     return iter;
 }
 
-int cg(CsrMatrix &A, std::vector<double> &b, std::vector<double> &x,
+int cg(CsrMatrix &A, const std::vector<double> &b, std::vector<double> &x,
        double tolerance, int max_iterations) {
 
     int n = static_cast<int>(b.size());
